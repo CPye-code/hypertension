@@ -1,0 +1,1690 @@
+---
+title: "Code for longitudinal SBP and SHT analysis in cats"
+author: "C Pye"
+date: "2026-06-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+#This R markdown file contains code used to examine changes in SBP and hypertension risk in 209 cats enrolled on CatPAWS. final edit to accompany manuscript
+
+#1. Load libraries
+```{r libraries}
+library(lme4)
+library("ggplot2")
+library(splines)
+library(dplyr)
+library(sjPlot)
+library(tidyverse)
+library(mclogit)
+library(performance)
+library(gtsummary)
+library(ggfortify)
+library(ggridges)
+library(patchwork)
+library(see)
+library(geepack)
+library("survival")
+library("ggsurvfit")
+library("gee")
+library("car")
+library(boot)
+library(rms)
+
+```
+
+#2. load data
+
+```{r data}
+
+Metadata_209_cats<-read.csv("Metadata_hypertension.csv")
+
+```
+
+#3. order factors in df
+```{r factors, include = FALSE}
+
+#order OE factors
+
+Metadata_209_cats$oe.abnormalities_Yes_no_incomplete<-as.factor(Metadata_209_cats$oe.abnormalities_Yes_no_incomplete)
+
+levels(Metadata_209_cats$oe.abnormalities_Yes_no_incomplete)
+Metadata_209_cats$oe.abnormalities_Yes_no_incomplete<-factor(Metadata_209_cats$oe.abnormalities_Yes_no_incomplete, levels= c("No", "Incomplete_OE", "Yes"))
+levels(Metadata_209_cats$oe.abnormalities_Yes_no_incomplete)
+
+```
+
+#4. create dataframe removing SBP NA
+
+```{r create SBP dataset}
+Metadata_SBP<-Metadata_209_cats%>%
+  filter(!is.na(Metadata_209_cats$SBP))
+
+##remove rows from cats recieving antihypertensives
+
+#8 rows with cats receiving amlodipine
+amlodipine_cases<-Metadata_SBP[c(226, 227, 228, 229, 293, 601, 623, 842),]
+View(amlodipine_cases)
+#8 visits from 5 cats in total. 
+
+#remove these from SBP data
+
+Metadata_SBP2<-Metadata_SBP[c(-226, -227, -228, -229, -293, -601, -623, -842),]
+
+#write csv
+
+#write.csv(Metadata_SBP2, "Metadata_SBP2.csv")
+```
+
+#5. summarise data
+
+##a. no.of visits and no.of cats
+```{r summary cats and visits, echo=FALSE}
+
+dim(Metadata_SBP2)
+
+Metadata_SBP2%>%
+  group_by(Cat_ID)%>%
+  summarise(n_distinct(Cat_ID))
+
+```
+
+##b. summarise age data
+```{r summary age}
+
+# Function to summarise age stats
+summarise_age <- function(data, group_var) {
+  data %>%
+    group_by({{ group_var }}) %>%
+    summarise(
+      N = n_distinct(Cat_ID),  # use your unique cat ID column
+      Median_Age = round(median(Age_years, na.rm = TRUE), 1),
+      IQR_Age = paste0(round(quantile(Age_years, 0.25, na.rm = TRUE), 1), "–", 
+                       round(quantile(Age_years, 0.75, na.rm = TRUE), 1)),
+      Age_Range = paste0(round(min(Age_years, na.rm = TRUE), 1), "–", 
+                         round(max(Age_years, na.rm = TRUE), 1)),
+      .groups = "drop"
+    )
+}
+
+# Summary tables
+summarise_age(Metadata_SBP2)
+
+age_by_sex <- summarise_age(Metadata_SBP2, Sex)
+
+age_by_health <- summarise_age(Metadata_SBP2, Overall_health_status)
+
+age_by_breed <- summarise_age(Metadata_SBP2, Breed)
+
+# Combine for full table (optional)
+full_age_summary <- bind_rows(
+  age_by_sex %>% mutate(Group = paste0("Sex: ", Sex)) %>% select(Group, everything(), -Sex),
+  age_by_health %>% mutate(Group = paste0("Health: ", Overall_health_status)) %>% select(Group, everything(), -Overall_health_status),
+  age_by_breed %>% mutate(Group = paste0("Breed: ", Breed)) %>% select(Group, everything(), -Breed)
+)
+
+# View full summary
+print(full_age_summary)
+
+# Summary tables for SBP
+
+age_by_sex <- summarise_age(Metadata_SBP2, Sex)
+
+age_by_health <- summarise_age(Metadata_SBP2, Overall_health_status)
+
+age_by_breed <- summarise_age(Metadata_SBP2, Breed)
+
+# Combine for full table (optional)
+full_age_summary <- bind_rows(
+  age_by_sex %>% mutate(Group = paste0("Sex: ", Sex)) %>% select(Group, everything(), -Sex),
+  age_by_health %>% mutate(Group = paste0("Health: ", Overall_health_status)) %>% select(Group, everything(), -Overall_health_status),
+  age_by_breed %>% mutate(Group = paste0("Breed: ", Breed)) %>% select(Group, everything(), -Breed)
+)
+
+# View full summary
+print(full_age_summary)
+
+
+# Combine for full table (optional)
+full_age_summary <- bind_rows(
+  age_by_sex %>% mutate(Group = paste0("Sex: ", Sex)) %>% select(Group, everything(), -Sex),
+  age_by_health %>% mutate(Group = paste0("Health: ", Overall_health_status)) %>% select(Group, everything(), -Overall_health_status),
+  age_by_breed %>% mutate(Group = paste0("Breed: ", Breed)) %>% select(Group, everything(), -Breed)
+)
+
+# View full summary
+print(full_age_summary)
+```
+
+
+##c. ridge plots
+```{r ridge plots, fig.cap = "Data distribution by age, sex, breed and health status"}
+
+# Plot A: Age by Sex
+pA <- ggplot(Metadata_SBP2, aes(x = Age_years, y = Sex, fill = Sex)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2) +
+  theme_minimal() +
+  labs(title = "A. Age distribution by Sex", x = "Age (years)", y = "") +
+  theme(legend.position = "none")
+
+# Plot B: Age by Breed
+pB <- ggplot(Metadata_SBP2, aes(x = Age_years, y = Breed, fill = Breed)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2) +
+  scale_fill_manual(values=c("Pedigree" = "yellow", "Non-pedigree" = "green"))+
+  theme_minimal() +
+  labs(title = "B. Age distribution by Breed", x = "Age (years)", y = "") +
+  theme(legend.position = "none")
+
+# Plot C: Age by Health Status
+#pC <- ggplot(Metadata_SBP2, aes(x = Age_years, y = #Overall_health_status, fill = Overall_health_status)) +
+#  geom_density_ridges(alpha = 0.7, scale = 1.2) +
+#  theme_minimal() +
+#  labs(title = "C. Age distribution by Overall Health Status", #x = "Age (years)", y = "") +
+#  theme(legend.position = "none")
+
+# Plot C: Sex by Breed
+pC <- ggplot(Metadata_SBP2, aes(x = Sex, y = Breed, fill = Breed)) +
+  geom_density_ridges(alpha = 0.7, scale = 1.2) +
+  scale_fill_manual(values=c("Pedigree" = "yellow", "Non-pedigree" = "green"))+
+  theme_minimal() +
+  labs(title = "C. Sex distribution by Breed", x = "Sex", y = "") +
+  theme(legend.position = "none")
+
+# Plot D: Age by Sex and Breed
+pD <- ggplot(Metadata_SBP2, aes(x = Age_years, fill = Sex)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ Breed) +
+  theme_minimal() +
+  labs(title = "D. Age distribution by Sex and Breed", x = "Age (years)", y = "Density")
+
+# Plot F: Age by Sex and Health Status
+pF <- ggplot(Metadata_SBP2, aes(x = Age_years, fill = Sex)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ Overall_health_status) +
+  theme_minimal() +
+  labs(title = "F. Age distribution by Sex and Health Status", x = "Age (years)", y = "Density")
+
+# Plot G: Age by Breed and Health Status
+pG<-ggplot(Metadata_SBP2, aes(x = Age_years, fill = Breed)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ Overall_health_status) + 
+  theme_minimal() +
+  labs(title = "G. Age Distribution by Breed and Health Status",
+       x = "Age (years)", y = "Density")
+
+# Combine using patchwork
+(pA + pB) / (pC+ pD) +
+  plot_annotation(title = "Distribution of Age, Sex and Breed",
+                  theme = theme(plot.title = element_text(hjust = 0.5, size = 16)))
+
+#ggsave("Supplementary_Figure_DistributionPlots2.png", #width = 12, height = 12, dpi = 300)
+
+
+```
+
+
+#6. Analysis of SBP
+
+##a. Summarise data
+
+```{r summary SBP}
+
+# Count the number of visits with sbpdata
+num_visits_with_SBP <- Metadata_SBP2 %>%
+  filter(!is.na(SBP)) %>%
+  summarise(num_visits = n())
+
+# Count the number of cats with sbp data
+num_cats_with_SBP <- Metadata_SBP2 %>%
+  filter(!is.na(SBP)) %>%
+  summarise(num_cats = n_distinct(Cat_ID))
+
+# Print the results
+print(num_visits_with_SBP)
+print(num_cats_with_SBP)
+
+# Count the number of visits per cat with sbp data
+visits_per_cat <- Metadata_SBP2 %>%
+  filter(!is.na(SBP)) %>%
+  group_by(Cat_ID) %>%
+  summarise(num_visits = n())
+
+# Calculate median, IQR, and range
+median_visits <- median(visits_per_cat$num_visits)
+iqr_visits <- IQR(visits_per_cat$num_visits)
+q1 <- quantile(visits_per_cat$num_visits, 0.25)  # First quartile (Q1)
+q3 <- quantile(visits_per_cat$num_visits, 0.75)  # Third quartile (Q3)
+range_visits <- range(visits_per_cat$num_visits)  # Returns min and max
+
+# Print the results
+print(median_visits)
+print(iqr_visits)
+print(q1)
+print(q3)
+print(range_visits)
+
+#median follow up time
+Metadata_SBP2$date <- as.Date(
+  Metadata_SBP2$date,
+  format = "%d/%m/%Y"
+)
+cat_times <- Metadata_SBP2 %>%
+  group_by(Cat_ID) %>%
+  summarise(
+    first_date = min(date, na.rm = TRUE),
+    last_date  = max(date, na.rm = TRUE),
+    diff_years = as.numeric(difftime(last_date, first_date, units = "days")) / 365.25,
+    .groups = "drop"
+  )
+View(cat_times)
+
+Metadata_SBP2_baseline2 <- Metadata_SBP2_baseline %>%
+  left_join(cat_times, by = "Cat_ID")
+
+View(Metadata_SBP2_baseline2)
+
+median(Metadata_SBP2_baseline2$diff_years)
+
+
+quantile(Metadata_SBP2_baseline2$diff_years, 0.25)
+
+quantile(Metadata_SBP2_baseline2$diff_years, 0.75)
+
+min(Metadata_SBP2_baseline2$diff_years)
+
+max(Metadata_SBP2_baseline2$diff_years)
+
+```
+
+##b. Is the SBP data normal?
+
+```{r SBP normality}
+
+hist(Metadata_SBP2$SBP, breaks=50)
+
+qqnorm(Metadata_SBP2$SBP)
+qqline(Metadata_SBP2$SBP)
+
+shapiro.test(Metadata_SBP2$SBP)
+
+
+##data is not normal 
+```
+
+##c. describe age at baseline (e.g. first SBP measured)
+###i. create df of baseline data
+```{r baseline df}
+#create dataset of baseline data 
+
+Metadata_SBP2_baseline<-Metadata_SBP2 %>%
+  arrange(Cat_ID, date) %>%
+  group_by(Cat_ID) %>%
+  slice(1) %>%
+  ungroup()
+
+```
+###ii. check normality
+```{r baseline sbp normality}
+#is it normal? 
+hist(Metadata_SBP2_baseline$SBP, breaks=50)
+
+qqnorm(Metadata_SBP2_baseline$SBP)
+qqline(Metadata_SBP2_baseline$SBP)
+
+shapiro.test(Metadata_SBP2_baseline$SBP)
+#not normal
+```
+
+###iii.summarise baseline data
+```{r}
+
+#summarise age
+summarise_age(Metadata_SBP2_baseline)
+
+#average years follow up per cat
+# Calculate follow-up duration per cat
+followup_per_cat <- Metadata_SBP2 %>%
+  group_by(Cat_ID) %>%
+  summarise(
+    followup_years = max(Age_years, na.rm = TRUE) - min(Age_years, na.rm = TRUE)
+  )
+
+print(followup_per_cat)
+
+hist(followup_per_cat$followup_years, breaks=10)
+shapiro.test(followup_per_cat$followup_years)
+
+#not normal - median IQR range
+# Calculate average follow-up duration across all cats
+median_followup <- median(followup_per_cat$followup_years, na.rm = TRUE)
+Q1_followup<- quantile(followup_per_cat$followup_years, 0.25)
+Q3_followup<- quantile(followup_per_cat$followup_years, 0.75)
+min_followup<- min(followup_per_cat$followup_years)
+max_followup<- max(followup_per_cat$followup_years)
+
+# Print results
+print(followup_per_cat)       # follow-up per cat
+cat("Median follow-up time (years):", median_followup, "\n")
+cat("Q1 follow-up time (years):", Q1_followup, "\n")
+cat("Q3 follow-up time (years):", Q3_followup, "\n")
+cat("min follow-up time (years):", min_followup, "\n")
+cat("max follow-up time (years):", max_followup, "\n")
+```
+###iv. describe clinical factors
+```{r describe data}
+
+
+median(Metadata_SBP2_baseline$SBP, na.rm=T)
+range(Metadata_SBP2_baseline$SBP, na.rm=T)
+IQR(Metadata_SBP2_baseline$SBP, na.rm=T)
+quantile(Metadata_SBP2_baseline$SBP, 0.25, na.rm=T)
+quantile(Metadata_SBP2_baseline$SBP, 0.75, na.rm=T)
+
+
+median(Metadata_SBP2_baseline$weight, na.rm=T)
+range(Metadata_SBP2_baseline$weight, na.rm=T)
+IQR(Metadata_SBP2_baseline$weight, na.rm=T)
+quantile(Metadata_SBP2_baseline$weight, 0.25, na.rm=T)
+quantile(Metadata_SBP2_baseline$weight, 0.75, na.rm=T)
+
+median(Metadata_SBP2_baseline$BCS, na.rm=T)
+range(Metadata_SBP2_baseline$BCS, na.rm=T)
+IQR(Metadata_SBP2_baseline$BCS, na.rm=T)
+quantile(Metadata_SBP2_baseline$BCS, 0.25, na.rm=T)
+quantile(Metadata_SBP2_baseline$BCS, 0.75, na.rm=T)
+
+median(Metadata_SBP2_baseline$MCS_combined, na.rm=T)
+range(Metadata_SBP2_baseline$MCS_combined, na.rm=T)
+IQR(Metadata_SBP2_baseline$MCS_combined, na.rm=T)
+quantile(Metadata_SBP2_baseline$MCS_combined, 0.25, na.rm=T)
+quantile(Metadata_SBP2_baseline$MCS_combined, 0.75, na.rm=T)
+
+
+#breed
+sum(Metadata_SBP2_baseline$Breed=="Pedigree")
+sum(Metadata_SBP2_baseline$Breed!="Pedigree")
+
+Metadata_SBP2_baseline%>%
+  group_by(breed)%>%
+  summarise(N=n())
+#sex
+sum(Metadata_SBP2_baseline$Sex=="Male")
+sum(Metadata_SBP2_baseline$Sex=="Female")
+#neuter
+sum(Metadata_SBP2_baseline$neuter_status=="No")
+
+#morbidities at baseline
+sum(Metadata_SBP2_baseline$CKD=="Yes")
+sum(Metadata_SBP2_baseline$Hypertension=="Yes")
+sum(Metadata_SBP2_baseline$diabetes_individual.tp=="Yes")
+sum(Metadata_SBP2_baseline$Hyperthyroidism=="Yes")
+sum(Metadata_SBP2_baseline$oe.abnormalities_Yes_no_incomplete=="Yes", na.rm=TRUE)
+sum(Metadata_SBP2_baseline$Dental_disease=="Yes")
+sum(Metadata_SBP2_baseline$Neoplasia=="Yes")
+sum(Metadata_SBP2_baseline$FIV.Y.N=="Yes")
+sum(Metadata_SBP2_baseline$Heart_murmur=="Yes")
+
+#morbidities by study end
+sum(Metadata_SBP2_baseline$CKD_over.study=="Yes")
+sum(Metadata_SBP2_baseline$hypertensive_over.study=="Yes")
+sum(Metadata_SBP2_baseline$Diabetes_mellitus=="Yes")
+sum(Metadata_SBP2_baseline$hyperthyroid_over.study=="Yes")
+sum(Metadata_SBP2_baseline$oe_abnormalities_over_study=="Yes")
+sum(Metadata_SBP2_baseline$dental_dz_over_study=="Yes")
+sum(Metadata_SBP2_baseline$neoplasia_over.study=="Yes")
+sum(Metadata_SBP2_baseline$HM_at_least_once=="Yes")
+
+
+```
+
+
+###v. code for themed plots
+```{r theme}
+My_Theme = theme(
+  axis.title.x = element_text(size = 16),
+  axis.text.x = element_text(size = 14),
+  axis.text.y = element_text(size=14),
+  axis.title.y = element_text(size = 16), 
+ plot.title = element_text(size = 16, hjust = 0.5))
+```
+
+##d. plot changes in spahetti plot to see SBP
+###i. ## age overall
+```{r spaghetti plots}
+g<-ggplot(Metadata_SBP2, aes(x = Age_years, y = SBP, group = Cat_ID)) +
+  geom_line(aes(group=factor(Cat_ID), col=Cat_ID, alpha = 0.5)) +  # Add lines connecting data points for each cat
+  geom_point(alpha = 0.5) +  # Add points for each data point
+  labs(x = "Age (years)", y = "Systolic blood pressure (mmHg)", title = "Trends of SBP changes with age in 203 cats") +
+  theme_minimal() +
+  theme(legend.position="none")
+
+g +My_Theme
+
+#ggsave("Trends of SBP changes with age in 203 cats.png", #plot= last_plot(), bg = "white", height = 2100, width = #3150, units="px" )
+```
+
+###ii. sex
+```{r spag plot sex}
+
+g2<-ggplot(Metadata_SBP2, aes(x = Age_years, y = SBP, group = Cat_ID)) +
+  geom_line(aes(group=factor(Cat_ID), col=Sex)) +  # Add lines connecting data points for each cat
+  geom_point(alpha = 0.5) +  # Add points for each data point
+  labs(x = "Age (years)", y = "Systolic blood pressure (mmHg)", title = "Trends of SBP changes with age and sex in 203 cats") +
+  theme_minimal() +
+  theme(legend.position="bottom")
+
+g2 +My_Theme
+
+#ggsave("Trends of SBP changes with age in 203 cats by #sex.png", plot= last_plot(), bg = "white", height = #2100, width = 3150, units="px" )
+
+```
+
+###iii. facet by Cat_ID
+```{r}
+
+# Split dataframe
+cat_ids <- unique(Metadata_SBP2$Cat_ID)
+
+first  <- cat_ids[1:56]
+second <- cat_ids[57:112]
+third <- cat_ids[113:168]
+fourth<- cat_ids[169:203]
+
+ggplot(filter(Metadata_SBP2, Cat_ID %in% first),
+             aes(Age_years, SBP, group = Cat_ID)) +
+  facet_wrap(~ Cat_ID, ncol = 7) +
+  geom_line(alpha = 0.5, colour = "steelblue") +
+  geom_point(alpha = 0.6, colour = "steelblue") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(filter(Metadata_SBP2, Cat_ID %in% second),
+             aes(Age_years, SBP, group = Cat_ID)) +
+  facet_wrap(~ Cat_ID, ncol = 7) +
+  geom_line(alpha = 0.5, colour = "steelblue") +
+  geom_point(alpha = 0.6, colour = "steelblue") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(filter(Metadata_SBP2, Cat_ID %in% third),
+             aes(Age_years, SBP, group = Cat_ID)) +
+  facet_wrap(~ Cat_ID, ncol = 7) +
+  geom_line(alpha = 0.5, colour = "steelblue") +
+  geom_point(alpha = 0.6, colour = "steelblue") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplot(filter(Metadata_SBP2, Cat_ID %in% fourth),
+             aes(Age_years, SBP, group = Cat_ID)) +
+  facet_wrap(~ Cat_ID, ncol = 7) +
+  geom_line(alpha = 0.5, colour = "steelblue") +
+  geom_point(alpha = 0.6, colour = "steelblue") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+##e. Linear mixed effects models for SBP changes with age. 
+###i. model 1 SBP, age, sex
+####check splines
+```{r check splines}
+#fit model for no splines up to 5df and compare
+mod_b1<-lmer(SBP ~ Age_years + Sex + Age_years:Sex +(1|Cat_ID), Metadata_SBP2)
+mod_b2<-lmer(SBP ~ ns(Age_years, df=2) + Sex + ns(Age_years, df=2):Sex +(1|Cat_ID), Metadata_SBP2)
+mod_b3<-lmer(SBP ~ ns(Age_years, df=3) + Sex + ns(Age_years, df=3):Sex +(1|Cat_ID), Metadata_SBP2)
+mod_b4<-lmer(SBP ~ ns(Age_years, df=4) + Sex + ns(Age_years, df=4):Sex +(1|Cat_ID), Metadata_SBP2)
+mod_b5<-lmer(SBP ~ ns(Age_years, df=5) + Sex + ns(Age_years, df=5):Sex +(1|Cat_ID), Metadata_SBP2)
+
+#compare
+anova(mod_b1, mod_b2, mod_b3, mod_b4, mod_b5)
+
+#mod_b2 with 2df best
+
+#check model assumptions
+
+check_model(mod_b2)
+acf(residuals(mod_b2))##ACF not showing stong autocorrelation. OK to use model. 
+#png("check1.png", width = 2000, height = 3000, res = #300)
+#print(check1)
+#dev.off()
+```
+
+####add owner as nested re
+```{r owner nested mod1}
+mod_b2_nested<-lmer(SBP ~ ns(Age_years, df=2) + Sex + ns(Age_years, df=2):Sex +(1|Owner_ID/Cat_ID), Metadata_SBP2)
+summary(mod_b2_nested)
+
+tab_model(mod_b2_nested)
+
+anova(mod_b2, mod_b2_nested)
+```
+
+####check mod1 assumptions
+```{r check mod1}
+check1<-check_model(mod_b2_nested)
+print(check1)
+png("check1.png", width = 2000, height = 3000, res = 300)
+print(check1)
+dev.off()
+
+VarCorr(mod_b2_nested)
+```
+
+####compare overall effect of age with LRT
+```{r LRT mode1}
+mod_b2_noage<-lmer(SBP ~  Sex +  +(1|Owner_ID/Cat_ID), Metadata_SBP2)
+
+anova(mod_b2_noage, mod_b2_nested)
+
+#mod with age significantly improves model fit P<0.001
+```
+
+###ii. model2: sbp, age, sex, diseases
+####ensure data ordered correctly
+```{r order mcs}
+Metadata_SBP2$MCS_grade_None_Mild_Moderate_to_Severe<-factor(Metadata_SBP2$MCS_grade_None_Mild_Moderate_to_Severe, levels= c( "None", "Mild", "Moderate to severe"))
+```
+
+#####arrange BCS into categories
+
+```{r categorise bcs}
+Metadata_SBP2 <- Metadata_SBP2 %>%
+  mutate(BCS_group3 = case_when(
+    BCS %in% 1:4 ~ "1-4",
+    BCS == 5     ~ "5",
+    BCS == 6     ~ "6",
+    BCS %in% 7:9 ~ "7-9",
+    TRUE ~ NA_character_
+  ))
+#set ref category as 5 
+Metadata_SBP2  <- Metadata_SBP2  %>%
+  mutate(BCS_group3 = factor(
+    BCS_group3,
+    levels = c("5", "1-4", "6", "7-9")
+  ))
+# Count cats in each category
+cat_counts <- Metadata_SBP2  %>%
+  count(BCS_group3)
+cat_counts 
+
+```
+##### group HM
+```{r group hm}
+Metadata_SBP2<-Metadata_SBP2%>%
+  mutate(
+    HM_group = case_when(
+      HM_grade == 0 ~ "None", 
+      HM_grade %in% c(1,2) ~ "I-II/VI",
+      HM_grade >=3 ~ "≥III/VI",
+      TRUE ~ NA_character_
+    ))
+#    
+levels(Metadata_SBP2$HM_group)
+#
+as.factor(Metadata_SBP2$HM_group)  
+#
+Metadata_SBP2$HM_group<-factor(Metadata_SBP2$HM_group, levels = c("None", "I-II/VI", "≥III/VI"))
+```
+#####group muscle loss
+```{r binary mcs}
+Metadata_SBP2<-Metadata_SBP2%>%
+  mutate(
+    MCS_binary= case_when(
+       MCS_combined == 30 ~ "None", 
+       MCS_combined %in% c(0:29) ~ "Muscle loss",
+      TRUE ~ NA_character_
+    ))
+#    
+levels(Metadata_SBP2$MCS_binary)
+#
+as.factor(Metadata_SBP2$MCS_binary)  
+#
+Metadata_SBP2$MCS_binary<-factor(Metadata_SBP2$MCS_binary, levels = c("None", "Muscle loss"))
+
+# Count cats in each category
+cat_counts <- Metadata_SBP2  %>%
+  count(MCS_binary)
+cat_counts 
+```
+
+####run model
+```{r model 2}
+mod_bc <- lmer(SBP ~ ns(Age_years, df = 2) + Sex + ns(Age_years, df=2):Sex + Breed + BCS_group3 + MCS_grade_None_Mild_Moderate_to_Severe +
+                 CKD + Hyperthyroidism +  Neoplasia + 
+                 Heart_murmur + Diabetes_mellitus + Dental_disease + oe.abnormalities_Yes_no_incomplete +
+                 (1 | Cat_ID), data = Metadata_SBP2)
+
+summary(mod_bc)
+```
+#####check N per disease in this model
+```{n per disease mod 2}
+Metadata_mod_bc<- Metadata_SBP2 %>%
+  select(Cat_ID, Cat_ID_timepoint, Sex, BCS_group, MCS_grade_None_Mild_Moderate_to_Severe, SBP, CKD, Hyperthyroidism, 
+         Neoplasia, Heart_murmur, Diabetes_mellitus, 
+         Dental_disease, oe.abnormalities_Yes_no_incomplete)
+#remove NAs
+Metadata_mod_bc<-na.omit(Metadata_mod_bc)
+
+distinct_cats_per_covariate_mod_bc <- Metadata_mod_bc %>%
+  summarise(
+    BCS_underweight=n_distinct(Cat_ID[BCS_group == "Underweight"]), 
+     BCS_ideal=n_distinct(Cat_ID[BCS_group == "Ideal weight"]), 
+    BCS_overweight=n_distinct(Cat_ID[BCS_group == "Overweight"]), 
+    BCS_obese=n_distinct(Cat_ID[BCS_group == "Obese"]), 
+    MCS_none=n_distinct(Cat_ID[MCS_grade_None_Mild_Moderate_to_Severe == "None"]), 
+    MCS_mild=n_distinct(Cat_ID[MCS_grade_None_Mild_Moderate_to_Severe == "Mild"]), 
+    MCS_mod_to_severe=n_distinct(Cat_ID[MCS_grade_None_Mild_Moderate_to_Severe == "Moderate_to_severe"]), 
+    CKD = n_distinct(Cat_ID[CKD == "Yes"]),
+    Hyperthyroidism = n_distinct(Cat_ID[Hyperthyroidism == "Yes"]),
+    Neoplasia = n_distinct(Cat_ID[Neoplasia == "Yes"]),
+    Heart_murmur = n_distinct(Cat_ID[Heart_murmur == "Yes"]),
+    diabetes = n_distinct(Cat_ID[Diabetes_mellitus == "Yes"]),
+    Dental_disease = n_distinct(Cat_ID[Dental_disease == "Yes"]),
+    oe_abnormalities_Yes = n_distinct(Cat_ID[oe.abnormalities_Yes_no_incomplete =="Yes"]),
+    oe_abnormalities_unable = n_distinct(Cat_ID[oe.abnormalities_Yes_no_incomplete =="Incomplete_OE"]),
+     Sex = n_distinct(Cat_ID[Sex == "Male"])
+  )
+
+#Print the number of distinct cats that meet the conditions
+print(distinct_cats_per_covariate_mod_bc)
+
+tbl_regression(mod_bc, exp=TRUE)%>%
+  add_n(location="level")
+
+tbl_regression(mod_bc2, exp=TRUE)%>%
+  add_n(location="level")
+
+tbl_regression(mod_bb1, exp=TRUE)%>%
+  add_n(location="level")
+```
+
+#####owner nested
+```{r owner nested mod2}
+mod_bc_nested <- lmer(SBP ~ ns(Age_years, df = 2) + Sex + ns(Age_years, df=2):Sex + Breed + BCS_group3 + MCS_grade_None_Mild_Moderate_to_Severe +
+                 CKD + Hyperthyroidism +  Neoplasia +
+                 HM_group + HR + diabetes_individual.tp + Dental_disease  + (1 | Owner_ID/Cat_ID), data = Metadata_SBP2)
+
+tab_model(mod_bc_nested)
+
+```
+
+#####compare splines
+```{r compare spline mod 2}
+mod_bc_nested2 <- lmer(SBP ~ Age_years + Sex + Age_years:Sex + Breed + BCS_group3 + MCS_grade_None_Mild_Moderate_to_Severe +
+                 CKD + Hyperthyroidism +  Neoplasia +
+                 HM_group + HR + diabetes_individual.tp + Dental_disease  + (1 | Owner_ID/Cat_ID), data = Metadata_SBP2)
+
+
+anova(mod_bc_nested, mod_bc_nested2)#splines significantly improve model 
+AIC(mod_bc_nested, mod_bc_nested2)
+```
+
+#####check mod 2 assumptions
+```{r check_model2}
+
+check2<-check_model(mod_bc_nested2)
+print(check2)
+check_collinearity(mod_bc_nested2)
+
+png("check2.png", width = 2000, height = 3000, res = 300)
+print(check2)
+dev.off()
+```
+#####LRT to compare overall effect of age
+
+```{r LRT mod2}
+mod_bc_noage<- lmer(SBP ~  + Sex + Breed + BCS_group3 + MCS_grade_None_Mild_Moderate_to_Severe +
+                 CKD + Hyperthyroidism +  Neoplasia +
+                 HM_group + HR + diabetes_individual.tp + Dental_disease  + (1 | Owner_ID/Cat_ID), data = Metadata_SBP2)
+
+anova(mod_bc_noage, mod_bc_nested)
+#Age significantly improved model P<0.001
+```
+
+##iii. mod 3 subset for OE score
+```{r mod 3}
+mod_oe_nested <- lmer(SBP ~ ns(Age_years, df = 2) + Sex + ns(Age_years, df=2):Sex + Breed + BCS_group3 + MCS_grade_None_Mild_Moderate_to_Severe +
+                 CKD + Hyperthyroidism +  Neoplasia +
+                 HM_group + HR + diabetes_individual.tp + Dental_disease + oe.abnormality_score +  (1 | Owner_ID/Cat_ID), data = Metadata_SBP2)
+
+tab_model(mod_oe_nested)
+
+```
+
+#####check mod 3 assumptions
+```{r check_model}
+
+check3<-check_model(mod_oe_nested)
+print(check3)
+check_collinearity(mod_oe_nested)
+
+png("check3.png", width = 2000, height = 3000, res = 300)
+print(check3)
+dev.off()
+
+check_collinearity(mod_oe_nested)
+```
+
+##iv. sensitivity analyses
+####Now subset by healthy cats only
+
+```{r healthy visits}
+
+Metadata_healthy<-Metadata_SBP2%>%
+  filter(Healthy_visit=="Yes")
+
+dim(Metadata_healthy)
+
+Metadata_healthy%>%
+  filter(Hypertension=="Yes")
+
+
+mod_healthy<-lmer(SBP ~ ns(Age_years, df = 2) + Sex + ns(Age_years, df=2):Sex + (1|Owner_ID/Cat_ID), Metadata_healthy)
+mod_healthy2<-lmer(SBP ~ ns(Age_years, df = 3) + Sex + ns(Age_years, df=3):Sex + (1|Owner_ID/Cat_ID), Metadata_healthy)
+tab_model(mod_healthy2)
+mod_healthy3<-lmer(SBP ~ Age_years + Sex + Age_years:Sex + (1|Owner_ID/Cat_ID), Metadata_healthy)
+
+anova(mod_healthy, mod_healthy2, mod_healthy3)
+
+
+tab_model(mod_healthy)
+plot_model(mod_healthy, type="pred", terms=c("Age_years[all]", "Sex"), show.data=F)
+plot_model(mod_healthy, type="pred", terms=c("Age_years[all]"), show.data=F)
+```
+
+#####check mod assumptions
+```{r check_model4}
+
+check4<-check_model(mod_healthy)
+print(check4)
+check_collinearity(mod_healthy)
+```
+
+####subet by "healthy over entire study" interactions
+
+```{r healthy over study interactions}
+data_healthyoverstudy<-Metadata_SBP2%>%
+  filter(Overall_health_status=="Healthy")
+  
+
+mod_healthyoverstudy<-lmer(SBP ~ ns(Age_years, df=2) + Sex + ns(Age_years, df=2):Sex +(1|Cat_ID), data_healthyoverstudy)
+
+tab_model(mod_healthyoverstudy)
+
+plot_model(mod_healthyoverstudy, type="pred")
+
+#interactions
+mod_int<-lmer(SBP ~ ns(Age_years, df=2) + Sex + ns(Age_years, df=2):Sex + Overall_health_status + ns(Age_years, df=2):Overall_health_status+ (1|Owner_ID/Cat_ID), Metadata_SBP2)
+
+tab_model(mod_int)
+
+plot_model(mod_int, type="emm", terms=c("Age_years", "Overall_health_status"), colors = c("orange", "purple"))+
+  xlab("Age (years)") +
+  ylab("SBP (mmHg)") +
+  ggtitle("") +
+  theme_bw() +
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(100, 200))
+
+Metadata_SBP2%>% filter (Overall_health_status=="Healthy") %>%   summarise(n_healthy_cats = n_distinct(Cat_ID))
+#
+ggsave("Fig3_age_health_interactions.png", plot= last_plot(), bg = "white", height =10, width = 15, units="cm" )
+
+```
+#####Check mod assumptions
+```{r check_model4}
+
+check4<-check_model(mod_int)
+png("check4.png", width = 3000, height = 4000, res = 300)
+print(check4)
+dev.off()
+
+check_collinearity(mod_int)
+
+```
+
+##v. table of results
+
+#####tables for nested models
+```{r tab LMMs}
+tab_model(mod_b2_nested, mod_bc_nested, mod_oe_nested, mod_healthy)
+
+```
+
+##vi. plot of results
+```{r plots LMMs}
+
+pA2<-plot_model(mod_b2_nested, type = "emm", color = "black", terms = c("Age_years[all]")) +
+  xlab("Age (years)") +
+  ylab("SBP (mmHg)") +
+  ggtitle("A") +
+  theme_bw() +
+  scale_y_continuous(limits = c(100, 200))
+pA2
+#ggsave("A SBP and age plot_mod1.png", plot= last_plot(), bg = "white", height =10, width = 10, units="cm" )
+
+pB2<-plot_model(mod_b2_nested, type="emm",color=c("#00BFC4", "#F8766D"), terms=c("Age_years[all]", "Sex"))+ 
+  xlab("Age (years)")+
+  ylab("SBP (mmHg)") + 
+  ggtitle("B")+  
+  theme_bw()+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(100, 200))
+
+pB2
+#ggsave("B SBP and sex and age plot_mod1.png", plot= last_plot(), bg = "white", height =10, width = 13, units="cm" )
+
+pC2<-plot_model(mod_healthy, type = "emm", color = "black", terms = c("Age_years[all]")) +
+  xlab("Age (years)") +
+  ylab("SBP (mmHg)") +
+  ggtitle("A") +
+  theme_bw() +
+  scale_y_continuous(limits = c(100, 200))
+
+#ggsave("C SBP and age plot_healthy cats only_mod4.png", #plot= last_plot(), bg = "white", height =10, width = 10, #units="cm" )
+
+pD2<-plot_model(mod_healthy, type="emm",color=c("#00BFC4", "#F8766D"), terms=c("Age_years[all]", "Sex"))+ 
+  xlab("Age (years)")+
+  ylab("SBP (mmHg)") + 
+  ggtitle("B")+  
+  theme_bw()+
+  theme(legend.position="none")+
+  scale_y_continuous(limits = c(100, 200))
+#ggsave("D SBP and sex and age plot_healthy cats #only_mod4.png", plot= last_plot(), bg = "white", height #=10, width = 13, units="cm" )
+
+
+
+
+#patchwork together 
+
+plotsA2_B2<-(pA2 | pB2) 
+
+ggsave("plotsA2_B2.png", plot=plotsA2_B2, bg = "white", height =10, width = 24, units="cm" )
+
+plots_healthy2_bw<-(pC2 | pD2)
+
+
+ggsave("plots_healthy2_bw.png", plot=plots_healthy2_bw,
+       
+plot_model(mod_int,
+           type = "emm",
+           color = c("orange", "purple"),
+           terms = c("Age_years[all]", "Overall_health_status")) +
+  xlab("Age (years)") +
+  ylab("SBP (mmHg)") +
+  ggtitle("") +
+  theme_bw() +
+  theme(
+    legend.position = "none") +
+  scale_y_continuous(limits = c(100, 200))
+ggsave("Fig.3.SBP and sex and health plot.png", plot= last_plot(), bg = "white", height =10, width = 13, units="cm" )
+
+
+```
+
+##vii. emmeans
+```{r}
+library(emmeans)
+em <- emmeans(mod_b2_nested, ~ Age_years,
+              at = list(Age_years = c(6,7,8,9, 10, 10.5, 11, 12, 13, 14, 15, 16)),
+              re.form = NA)  # Omit random effects (population-level prediction)
+
+summary(em)
+
+em_sex <- emmeans(mod_b2_nested, ~ Age_years + Sex,
+              at = list(Age_years = c(6,7,8,9, 10, 10.5, 11, 12, 13, 14, 15, 16, 17)),
+              re.form = NA)  # Omit random effects (population-level prediction)
+
+summary(em_sex)
+
+em_healthy <- emmeans(mod_healthy, ~ Age_years,
+              at = list(Age_years = c(6,7,8,9, 10, 10.5, 11, 12, 13, 14, 15, 16, 17)),
+              re.form = NA)  # Omit random effects (population-level prediction)
+
+summary(em_healthy )
+
+em_healthy_sex <- emmeans(mod_healthy, ~ Age_years + Sex,
+              at = list(Age_years = c(6,7,8,9, 10, 10.5, 11, 12, 13, 14, 15, 16, 17)),
+              re.form = NA)  # Omit random effects (population-level prediction)
+
+summary(em_healthy_sex)
+```
+
+##viii. sample sizes per model
+```{r}
+#for visit numbers
+> tbl_regression(mod_bc_nested, exp=T)%>%add_n(location="level")
+> tbl_regression(mod_oe_nested, exp=T)%>%add_n(location="level")
+tbl_regression(mod_healthy, exp=T)%>%add_n(location="level")
+#for cat numbers?
+#check N per disease in this model
+Metadata_mod_bc_nested<- Metadata_SBP2 %>%
+  select(Cat_ID, Cat_ID_timepoint, Sex, BCS_group3, CKD, Hyperthyroidism, 
+         Hypertension, Neoplasia, HM_group, diabetes_individual.tp, 
+         Dental_disease, HR, Breed, MCS_grade_None_Mild_Moderate_to_Severe)
+#remove NAs
+Metadata_mod_bc_nested<-na.omit(Metadata_mod_bc_nested)
+
+distinct_cats_per_covariate_mod_bc_nested <- Metadata_mod_bc_nested %>%
+  summarise(
+    BCS5=n_distinct(Cat_ID[BCS_group3== "5"]),
+     BCS14=n_distinct(Cat_ID[BCS_group3== "1-4"]),
+     BCS6=n_distinct(Cat_ID[BCS_group3== "6"]),
+     BCS79=n_distinct(Cat_ID[BCS_group3== "7-9"]),
+     MCS3=n_distinct(Cat_ID[MCS_grade_None_Mild_Moderate_to_Severe== "None"]),
+    MCS2=n_distinct(Cat_ID[MCS_grade_None_Mild_Moderate_to_Severe== "Mild"]),
+    MCS01=n_distinct(Cat_ID[MCS_grade_None_Mild_Moderate_to_Severe== "Moderate to severe"]),
+    CKD = n_distinct(Cat_ID[CKD == "Yes"]),
+    Hyperthyroidism = n_distinct(Cat_ID[Hyperthyroidism == "Yes"]),
+    Hypertension = n_distinct(Cat_ID[Hypertension == "Yes"]),
+    Neoplasia = n_distinct(Cat_ID[Neoplasia == "Yes"]),
+    HM_group0 = n_distinct(Cat_ID[HM_group == "None"]),
+    HM_group12 = n_distinct(Cat_ID[HM_group  == "I-II/VI"]),
+    HM_group3 = n_distinct(Cat_ID[HM_group  == "≥III/VI"]),
+    diabetes_individual = n_distinct(Cat_ID[diabetes_individual.tp == "Yes"]),
+    Dental_disease = n_distinct(Cat_ID[Dental_disease == "Yes"]),
+     Sex = n_distinct(Cat_ID[Sex == "Male"]),
+    Breed_ped=n_distinct(Cat_ID[Breed =="Pedigree"])
+  )
+
+#Print the number of distinct cats that meet the conditions
+print(distinct_cats_per_covariate_mod_bc_nested)
+
+
+```
+####and for mod_oe
+```{r}
+#for cat numbers?
+#check N per disease in this model
+Metadata_mod_oe_nested<- Metadata_SBP2 %>%
+  select(Cat_ID, Cat_ID_timepoint, Sex, BCS_group3, CKD, Hyperthyroidism, 
+         Hypertension, Neoplasia, HM_group, diabetes_individual.tp, 
+         Dental_disease, HR, Breed, MCS_grade_None_Mild_Moderate_to_Severe, oe.abnormality_score)
+#remove NAs
+Metadata_mod_oe_nested<-na.omit(Metadata_mod_oe_nested)
+
+distinct_cats_per_covariate_mod_oe_nested <- Metadata_mod_oe_nested %>%
+  summarise(
+    BCS5=n_distinct(Cat_ID[BCS_group3== "5"]),
+     BCS14=n_distinct(Cat_ID[BCS_group3== "1-4"]),
+     BCS6=n_distinct(Cat_ID[BCS_group3== "6"]),
+     BCS79=n_distinct(Cat_ID[BCS_group3== "7-9"]),
+     MCS3=n_distinct(Cat_ID[MCS_grade_None_Mild_Moderate_to_Severe== "None"]),
+    MCS2=n_distinct(Cat_ID[MCS_grade_None_Mild_Moderate_to_Severe== "Mild"]),
+    MCS01=n_distinct(Cat_ID[MCS_grade_None_Mild_Moderate_to_Severe== "Moderate to severe"]),
+    CKD = n_distinct(Cat_ID[CKD == "Yes"]),
+    Hyperthyroidism = n_distinct(Cat_ID[Hyperthyroidism == "Yes"]),
+    Hypertension = n_distinct(Cat_ID[Hypertension == "Yes"]),
+    Neoplasia = n_distinct(Cat_ID[Neoplasia == "Yes"]),
+    HM_group0 = n_distinct(Cat_ID[HM_group == "None"]),
+    HM_group12 = n_distinct(Cat_ID[HM_group  == "I-II/VI"]),
+    HM_group3 = n_distinct(Cat_ID[HM_group  == "≥III/VI"]),
+    diabetes_individual = n_distinct(Cat_ID[diabetes_individual.tp == "Yes"]),
+    Dental_disease = n_distinct(Cat_ID[Dental_disease == "Yes"]),
+     Sex = n_distinct(Cat_ID[Sex == "Male"]),
+    Breed_ped=n_distinct(Cat_ID[Breed =="Pedigree"])
+  )
+
+#Print the number of distinct cats that meet the conditions
+print(distinct_cats_per_covariate_mod_oe_nested)
+
+
+```
+#####and for healthy
+
+```{r}
+#for cat numbers?
+#check N per disease in this model
+Metadata_mod_healthy<- Metadata_SBP2 %>%
+  filter(Healthy_visit=="Yes")%>%
+  select(Cat_ID, Cat_ID_timepoint, Sex, Age_years)
+#remove NAs
+Metadata_mod_healthy<-na.omit(Metadata_mod_healthy)
+
+distinct_cats_per_covariate_mod_healthy<- Metadata_mod_healthy %>%
+  summarise(
+     SexM = n_distinct(Cat_ID[Sex == "Male"]),
+     SexF = n_distinct(Cat_ID[Sex == "Female"]),
+  )
+
+#Print the number of distinct cats that meet the conditions
+print(distinct_cats_per_covariate_mod_healthy)
+
+dim(Metadata_mod_healthy)
+```
+
+#7. model visits where SBP >=160mmHg
+##a. binomial model of hypertension
+```{r}
+Metadata_SBP2$Hypertension<-as.factor(Metadata_SBP2$Hypertension.y)
+
+Metadata_209_cats$Hypertension<-as.factor(Metadata_209_cats$Hypertension)
+#full model
+
+mod_ht<-glmer(Hypertension ~ Age_years + Sex + Breed + BCS_group2 + MCS_grade_None_Mild_Moderate_to_Severe + CKD + Hyperthyroidism + Neoplasia + diabetes_individual.tp + HM_group + Dental_disease + (1|Cat_ID), data= Metadata_SBP2, family=binomial)
+
+#
+summary(mod_ht)
+tab_model(mod_ht)
+tbl_regression(mod_ht, exp=T)%>% add_n(location="level")
+####model fails to converge? neoplasia infinite
+
+#remove neoplasia and diabetic cases as too few samples
+Metadata_SBP_nodmorneo<- Metadata_SBP2 %>%
+  filter(diabetes_individual.tp != "Yes")
+
+Metadata_SBP_nodmorneo<- Metadata_SBP_nodmorneo %>%
+  filter(Neoplasia != "Yes")
+
+#re-run model
+
+mod_ht<-glmer(Hypertension ~ Age_years + Sex + Breed + HR + BCS_group2 + MCS_grade_None_Mild_Moderate_to_Severe + CKD + Hyperthyroidism + HM_group + Dental_disease + (1|Cat_ID), data= Metadata_SBP_nodmorneo, family=binomial) #failed to converge
+
+mod_ht<-glmer(Hypertension ~ Age_years + Sex + BCS_group2 + MCS_grade_None_Mild_Moderate_to_Severe + CKD + Hyperthyroidism + Heart_murmur+ Dental_disease + (1|Cat_ID), data= Metadata_SBP_nodmorneo, family=binomial) #failed to converge
+
+#
+summary(mod_ht)
+tab_model(mod_ht)
+tbl_regression(mod_ht, exp=T)%>% add_n(location="level")
+
+mod_ht<-glmer(Hypertension ~ Age_years + Sex + Breed + HR + BCS_group2 + MCS_grade_None_Mild_Moderate_to_Severe + CKD + Hyperthyroidism + HM_group + Dental_disease + (1|Cat_ID), data= Metadata_SBP_nodmorneo, family=binomial) #failed to converge
+
+#
+summary(mod_ht)
+tab_model(mod_ht)
+tbl_regression(mod_ht, exp=T)%>% add_n(location="level")
+
+```
+
+
+##b. GEE models for SBP >160 appointments
+###i. sort data
+```{r data_for_gee}
+#create dataframe without NAs
+
+Metadata_SBP_gee<-na.omit(Metadata_SBP2[ ,c("Hypertension_num", "Cat_ID", "Owner_ID", "Age_years", "Sex", "Breed", "BCS_group3", "MCS_binary", "HR", "CKD", "diabetes_individual.tp", "Neoplasia", "SBP", "Hyperthyroidism", "Heart_murmur", "HR", "Dental_disease")])
+
+sum(Metadata_SBP_gee$Hypertension_num)
+
+Metadata_SBP_gee$hypertensive_over.study_num<-Metadata_SBP_gee$hypertensive_over.study
+sum(Metadata_SBP_gee$hypertensive_over.study_num)
+
+length(unique(Metadata_SBP_gee$Cat_ID[Metadata_SBP_gee$Hypertension_num=="1"]))
+
+#remove dm and neo
+
+#Metadata_SBP_gee<-na.omit(Metadata_SBP_nodmorneo[ ,c("Hypertension_num", "Cat_ID", "Owner_ID", "Age_years", "Sex", "Breed", "BCS_group2", #"MCS_grade_None_Mild_Moderate_to_Severe", "HR", "CKD", "SBP", "Hyperthyroidism","HM_group", "Heart_murmur", "HR", "Dental_disease", "Healthy_visit")])
+```
+
+###ii. try GEE package
+```{r gee package mod}
+
+
+gee_ht<-gee(Hypertension_num ~ Sex + Breed, 
+            data=Metadata_SBP2,
+            id= Cat_ID,
+            family=binomial, 
+            corstr="exhangeable")
+#won't work as some cats only have 1 measurement. Try geeglm
+```
+
+###iii. try geepack glm model
+```{r geepack}
+
+
+gee_ht <- geeglm(
+  Hypertension_num ~ Age_years + Sex + Breed + HR + BCS_group3 + MCS_binary + Neoplasia + diabetes_individual.tp +
+    CKD + Hyperthyroidism +  Heart_murmur + Dental_disease,
+  data = Metadata_SBP_gee,
+  id = Cat_ID,
+  family = binomial,
+  corstr = "exchangeable"
+)
+
+tbl_regression(gee_ht, exp=TRUE)%>%add_n(location="level")
+
+tab_model(gee_ht)
+
+summary(gee_ht)
+```
+####check mod assumptions
+```{r check_geeglm}
+
+check_collinearity(gee_ht)
+check_residuals(gee_ht)
+
+
+```
+
+####check neoplasia results
+```{r check_neo}
+with(Metadata_SBP_gee, table(Neoplasia, Hypertension_num))
+
+with(Metadata_SBP_gee,
+     table(Neoplasia, tapply(Hypertension_num, Cat_ID, max)))
+
+
+length(unique(Metadata_SBP_gee$Cat_ID[Metadata_SBP_gee$Neoplasia=="Yes"]))
+
+#Zero hypertensive outcomes among neoplasia-positive cats
+```
+
+
+####remove neoplasia Neoplasia was excluded from multivariable models due to quasi-complete separation (no hypertensive outcomes observed among exposed cats), resulting in unstable estimates.
+```{r no neo}
+gee_ht2 <- geeglm(
+  Hypertension_num ~ Age_years + Sex + Breed + HR + BCS_group3 + MCS_binary + diabetes_individual.tp +
+    CKD + Hyperthyroidism +  Heart_murmur + Dental_disease,
+  data = Metadata_SBP_gee,
+  id = Cat_ID,
+  family = binomial,
+  corstr = "exchangeable"
+)
+
+tbl_regression(gee_ht2, pvalue_fun = label_style_pvalue(digits = 3), exp=TRUE)%>%add_n(location="level")
+summary(gee_ht2)
+
+```
+
+
+####check over-parameterised
+```{r check_geeglm}
+table(Metadata_SBP_gee$Hypertension_num)
+# Count of events
+length(coef(gee_ht2))
+# Number of estimated parameters
+#EPV=7
+
+summary(gee_ht2)$coefficients[, "Std.err"]
+
+#correlation
+
+vif(lm(Hypertension_num ~ Age_years + Sex + Breed + HR + BCS_group3 + MCS_binary + diabetes_individual.tp +
+    CKD + Hyperthyroidism +  Heart_murmur + Dental_disease, data = Metadata_SBP_gee))
+
+check_model(gee_ht2)
+check_collinearity(gee_ht2)
+check_homogeneity(gee_ht2)
+```
+
+##iii. GEE2 for OE score also
+
+```{r geeglm oe}
+Metadata_SBP_gee_oe<-na.omit(Metadata_SBP2[ ,c("Cat_ID", "Owner_ID", "Age_years", "Sex", "Breed", "BCS_group3", "MCS_binary", "HR", "CKD", "Hypertension_num", "SBP", "diabetes_individual.tp", "Hyperthyroidism", "Heart_murmur", "HR", "Dental_disease", "oe.abnormality_score", "Healthy_visit")])
+
+sum(Metadata_SBP_gee_oe$Hypertension_num)
+length(unique(Metadata_SBP_gee_oe$Cat_ID[Metadata_SBP_gee_oe$Hypertension_num=="1"]))
+
+gee_ht_oe <- geeglm(
+  Hypertension_num ~ Age_years + Sex + Breed + HR + BCS_group3 + MCS_binary + 
+    CKD + Hyperthyroidism  + Heart_murmur + diabetes_individual.tp  + Dental_disease +oe.abnormality_score,
+  data = Metadata_SBP_gee_oe,
+  id = Cat_ID,
+  family = binomial,
+  corstr = "exchangeable"
+)
+
+#tab model
+
+tbl_regression(gee_ht_oe,  pvalue_fun = label_style_pvalue(digits = 3), exp=TRUE)%>%add_n(location="level")
+tab_model(gee_ht_oe)
+
+#check model
+check_collinearity(gee_ht_oe)
+check_model(gee_ht_oe)
+
+```
+
+#8. TTE - Cox PH model
+
+##a. sort data
+###i. create baseline dataset
+
+```{r baseline_data}
+
+Metadata_hyp_baseline <- Metadata_SBP2 %>%
+  arrange(Cat_ID, date) %>%
+  group_by(Cat_ID) %>%
+  slice(1) %>%
+  ungroup()
+```
+
+###ii. Merge new incidence_data looking at censoring at age at last study visit NOT last study date
+```{r read incidence data}
+
+Hypertension_incidence_data2170326 <- read.csv("Hypertension_incidence_data2170326.csv")
+
+Metadata_hyp_baseline2 <- Hypertension_incidence_data2170326 %>%
+  left_join(
+    Metadata_SBP2 %>%
+      select(
+        Cat_ID_timepoint,
+        BCS_group2,
+        BCS_group3,
+        Heart_murmur,
+        HR,
+        CKD,
+        Hyperthyroidism,
+        Dental_disease,
+        oe.abnormalities_Yes_no_incomplete,
+        MCS_grade_None_Mild_Moderate_to_Severe
+      ),
+    by = "Cat_ID_timepoint"
+  )
+
+nrow(Metadata_hyp_baseline2)
+colnames(Metadata_hyp_baseline2)
+Metadata_hyp_baseline2<- Metadata_hyp_baseline2 %>%
+  rename(SBP = hypertensive_sbp)
+
+#no BCS 1-2 in baseline - reword categories
+Metadata_hyp_baseline2 <- Metadata_hyp_baseline2 %>%
+  mutate(BCS_group3 = case_when(
+    BCS %in% 3:4 ~ "3-4",
+    BCS == 5     ~ "5",
+    BCS == 6     ~ "6",
+    BCS %in% 7:9 ~ "7-9",
+    TRUE ~ NA_character_
+  ))
+#set ref category as 5 
+Metadata_hyp_baseline2  <- Metadata_hyp_baseline2 %>%
+  mutate(BCS_group3 = factor(
+    BCS_group3,
+    levels = c("5", "3-4", "6", "7-9")
+  ))
+
+```
+
+####iii. remove those cats diagnosed at baseline
+```{r remove_baseline_dx}
+Metadata_hyp_baseline2<-Metadata_hyp_baseline2%>%
+  filter(baseline_dx =="No")
+```
+
+##b. Check MCS missingness
+```{r MCS}
+
+#there are 11 missing MCS at baseline. does MCS affect hypertension risk?
+
+cox_mcs<-coxph(Surv(Censor_visit_age, stHyp ) ~ MCS_grade_None_Mild_Moderate_to_Severe,
+                    data = Metadata_hyp_baseline2)
+
+summary(cox_mcs)#not significant
+
+```
+
+##c. create complete case dataset
+
+```{r complete_data}
+#complete cases
+
+Metadata_hyp_baseline_for_cox<-na.omit(Metadata_hyp_baseline2[,c("Cat_ID", "Age_years", "Censor_visit_age", "stHyp", "Sex", "SBP", "Breed", "BCS_group2", "BCS_group3")])
+
+dim(Metadata_hyp_baseline_for_cox)
+
+median(Metadata_hyp_baseline_for_cox$Age_years)
+quantile(Metadata_hyp_baseline_for_cox$Age_years, 0.25)
+quantile(Metadata_hyp_baseline_for_cox$Age_years, 0.75)
+min(Metadata_hyp_baseline_for_cox$Age_years)
+max(Metadata_hyp_baseline_for_cox$Age_years)
+
+Metadata_hyp_baseline_for_cox%>%
+  filter(stHyp==2)
+```
+
+##d. examine healthy visits only
+
+```{r healthy}
+#exmaine healthy visits only?
+
+#merge healthy_visit
+Metadata_hyp_baseline_3 <- merge(
+  Metadata_hyp_baseline2,
+  Metadata_SBP2[, c("Cat_ID_timepoint", "Healthy_visit")],
+  by = "Cat_ID_timepoint",
+  all = FALSE
+)
+#make healthy the reference
+Metadata_hyp_baseline_3  <- Metadata_hyp_baseline_3 %>%
+  mutate(Healthy_visit= factor(
+   Healthy_visit,
+    levels = c("Yes", "No" )
+  ))
+
+colnames(Metadata_hyp_baseline_3)
+```
+##e. inital Cox model exploring adding morbidities
+```{r cox_morbs}
+cox_1<-coxph(Surv(Censor_visit_age, stHyp ) ~ Sex + Breed + SBP + BCS_group3 + Heart_murmur + HR + CKD + Hyperthyroidism, data =  Metadata_hyp_baseline2)
+
+tbl_regression(cox_1, exp=T)%>% add_n(location="level")
+
+# unable to model with hyperthyroidism - unstable coefficient. Remove? CKD also limitis event numbers
+
+cox_2<-coxph(Surv(Censor_visit_age, stHyp ) ~ Sex + Breed + BCS_group3 + MCS_grade_None_Mild_Moderate_to_Severe + Heart_murmur +CKD +Dental_disease + oe.abnormalities_Yes_no_incomplete, data = Metadata_hyp_baseline2)
+
+tbl_regression(cox_2, exp=T)%>% add_n(location="level")
+
+#strip down to healthy visit rather tahn co-morbs
+
+cox_3<-coxph(Surv(Censor_visit_age, stHyp ) ~ Sex + Breed + BCS_group3 + MCS_grade_None_Mild_Moderate_to_Severe + Healthy_visit, data = Metadata_hyp_baseline_3)
+
+tbl_regression(cox_3, exp=T)%>% add_n(location="level")
+
+cox.zph(cox_3)
+
+##issues - low event numbers of certain morbidities, healthy overall creates bias as unhealthy cats likely die earlier and are censored
+
+```
+
+##f. take healthy visit at baseline data only
+
+```{r healthy_COX}
+cox_healthy_data<-Metadata_hyp_baseline_3%>%
+  filter(Healthy_visit=="Yes")
+cox_healthy<-coxph(Surv(Censor_visit_age, stHyp ) ~ Sex + Breed + BCS_group3 + MCS_grade_None_Mild_Moderate_to_Severe, data = cox_healthy_data)
+
+tbl_regression(cox_healthy, exp=T)%>% add_n(location="level")
+
+#low sample size!
+```
+
+##g. forget about morbidities. Model using clinical data
+
+```{r}
+#all
+cox_hyprisk<-coxph(Surv(Censor_visit_age, stHyp ) ~ Sex + Breed + SBP + 
+                     BCS_group3,
+                   data = Metadata_hyp_baseline_for_cox)
+
+tbl_regression(cox_hyprisk, exp=T)%>%add_n(location=c("level"))
+AIC(cox_hyprisk)
+
+
+#remove breed
+cox_hyprisk2<-coxph(Surv(Censor_visit_age, stHyp ) ~ Sex + SBP + 
+                     BCS_group3,
+                   data = Metadata_hyp_baseline_for_cox)
+
+tbl_regression(cox_hyprisk2, exp=T)%>%add_n(location=c("level"))
+AIC(cox_hyprisk2)
+
+
+#SBP alone
+cox_hyprisk3<-coxph(Surv(Censor_visit_age, stHyp ) ~ SBP,
+                   data = Metadata_hyp_baseline_for_cox)
+
+tbl_regression(cox_hyprisk3, exp=T)%>%add_n(location=c("level"))
+AIC(cox_hyprisk3)
+
+
+
+AIC(cox_hyprisk, cox_hyprisk2, cox_hyprisk3)#cox_2 best fit
+
+
+summary(cox_hyprisk2)
+```
+
+###i. BEST MODEL
+```{r best}
+summary(cox_hyprisk2) 
+tbl_regression(cox_hyprisk2, pvalue_fun= label_style_pvalue(digits = 3), exp=T)%>%add_n(location=c("level"))
+```
+###ii. check PH assumptions
+```{r check_PH}
+cox.zph(cox_hyprisk2)
+plot(cox.zph(cox_hyprisk2))
+```
+
+###iii. check outliers
+```{r check_outliers}
+# Standardized dfbeta residuals
+residuals(cox_hyprisk2, type = "dfbeta")
+plot(residuals(cox_hyprisk2, type = "dfbeta"))  # look for points far from 0
+
+# Deviance residuals
+plot(residuals(cox_hyprisk2, type = "deviance"))
+
+```
+###iv. check linearity of SBP
+```{r check_cox_splines}
+
+
+# Fit model with a penalized spline for SBP
+cox_spline <- coxph(Surv(Censor_visit_age, stHyp) ~ ns(SBP, df=2) + Sex + BCS_group3,
+                    data = Metadata_hyp_baseline_for_cox)
+summary(cox_spline)  # or compare log-likelihood to linear model
+AIC(cox_hyprisk2, cox_spline)
+#some slight imp to model fit but ideally keep the simpler linear model for easier interpretation
+```
+
+###v. assess concordance and c-index
+```{r concordance}
+#Concordance = 0.730
+concordance(cox_hyprisk2)$concordance
+summary(cox_hyprisk2)
+
+```
+###vi. check for multicollinearity
+
+```{r vif_cox}
+
+vif(cox_hyprisk2)
+#all VIF<2
+```
+
+### vii. bootstrap 
+
+```{r bootstrap}
+
+
+# Function to compute coefficients in bootstrap sample
+cox_boot_fun <- function(data, indices) {
+  d <- data[indices, ]  # resample with replacement
+  fit <- coxph(Surv(Censor_visit_age, stHyp) ~ Sex + SBP + BCS_group3, data = d)
+  return(coef(fit))  # return coefficients
+}
+
+# Run bootstrap
+set.seed(123)
+boot_results <- boot(data = Metadata_hyp_baseline_for_cox,
+                     statistic = cox_boot_fun,
+                     R = 1000)  # number of bootstrap samples
+
+# Inspect results
+boot_results
+
+# Bootstrap mean, SD, and 95% CI
+apply(boot_results$t, 2, mean)      # mean coefficients
+apply(boot_results$t, 2, sd)        # SD of coefficients
+
+# 95% percentile CI
+apply(boot_results$t, 2, function(x) quantile(x, probs = c(0.025, 0.975)))
+
+
+exp(apply(boot_results$t, 2, mean))  # mean HRs
+exp(apply(boot_results$t, 2, function(x) quantile(x, probs=c(0.025,0.975))))  # 95% CI
+```
+#### run rms
+```{r}
+
+# Setup for rms functions
+dd <- datadist(Metadata_hyp_baseline_for_cox)
+options(datadist="dd")
+
+cox_rms <- cph(Surv(Censor_visit_age, stHyp) ~ Sex + SBP + BCS_group3,
+               data = Metadata_hyp_baseline_for_cox, x=TRUE, y=TRUE, surv=TRUE)
+
+# Bootstrap validation
+set.seed(123)
+validate(cox_rms, B=1000, method="boot")  # B=1000 bootstrap samples
+
+```
+
+##vii. plot km curve
+
+```{r km}
+
+#KM
+km1<-survfit2(Surv(Censor_visit_age, stHyp ) ~ Sex, data = Metadata_hyp_baseline_for_cox)%>%
+  ggsurvfit() +
+  labs(x = "Age (years)", y="Hypertension-free survival probability")+
+  ggtitle("A. Hypertension-free survival by sex")+
+  #add_risktable()+
+  add_confidence_interval()+
+  add_censor_mark( size=1)+
+  scale_x_continuous(breaks = 6:17, limits = c(6, 17))+
+theme(
+  legend.position = "inside",
+  legend.position.inside = c(0.15, 0.15),
+  legend.text=element_text(size=9),
+  legend.box.background =  element_rect(colour="black", linewidth = 1),
+  legend.title = element_text(size=9), 
+  legend.title.position="top"
+)
+km1
+#ggsave("Hypertension_sex_KM_curev170326.png", #plot=last_plot(),height = 2100, width = 2100, #units="px" )
+
+
+#KM
+km2<-survfit2(Surv(Censor_visit_age, stHyp ) ~ BCS_group3, data = Metadata_hyp_baseline_for_cox)%>%
+  ggsurvfit() +
+  labs(x = "Age (years)", y="Hypertension-free survival probability", color="BCS")+
+  ggtitle("B. Hypertension-free survival by BCS")+
+ # add_risktable()+
+  #add_confidence_interval()+
+  scale_color_manual(values=c("3-4" = "black", "5" = "brown", "6" = "aquamarine4", "7-9" = "grey"))+ 
+  add_censor_mark( size=1)+
+  scale_x_continuous(breaks = 6:17, limits = c(6, 17))+
+  theme(
+  legend.position = "inside",
+  legend.position.inside = c(0.1, 0.2),
+  legend.text=element_text(size=9),
+  legend.box.background =  element_rect(colour="black", linewidth = 1),
+  legend.title = element_text(size=9)
+)
+km2
+#ggsave("Hypertension_BCS_KM_curev170326.png", #plot=last_plot(),height = 2100, width = 2100, #units="px" )
+
+km1+km2
+#ggsave("Hypertension_sex_bcs_KM_curve_Figure170326.png"#, plot=last_plot(),height = 15, width = 30, units="cm" #)
+
+```
+
+###viii. plot cumulativehaz
+
+```{r cumhaz}
+#
+ci1<-survfit2(Surv(end_age_in_years, stHyp ) ~ Sex, data = Metadata_hyp_baseline_for_cox)%>%
+  ggsurvfit(type="cumhaz") +
+  labs(x = "Age (years)")+
+  ggtitle("A.Hypertension Diagnosis by Sex")+
+  #add_risktable()+
+  add_confidence_interval()+
+  add_censor_mark( size=1)+
+  scale_x_continuous(breaks = 6:17, limits = c(6, 17))+
+theme(
+  legend.position = "inside",
+  legend.position.inside = c(0.1, 0.9),
+  legend.text=element_text(size=9),
+  legend.box.background =  element_rect(colour="black", linewidth = 1),
+  legend.title = element_text(size=9), 
+  legend.title.position="top"
+)
+ci1
+
+#ggsave("Hypertension_sex_cumhaz21012025.png", #plot=last_plot(),height = 2100, width = 2100, #units="px" )
+
+
+#
+ci2<-survfit2(Surv(end_age_in_years, stHyp ) ~ BCS_group3, data = Metadata_hyp_baseline_for_cox)%>%
+  ggsurvfit(type="cumhaz") +
+  labs(x = "Age (years)", color="BCS")+
+  ggtitle("B.Hypertension Diagnosis by BCS")+
+ # add_risktable()+
+  #add_confidence_interval()+
+  scale_color_manual(values=c("3-4" ="black", "5" = "orange", "6" = "purple", "7-9" = "turquoise"))+ 
+  add_censor_mark( size=1)+
+  scale_x_continuous(breaks = 6:17, limits = c(6, 17))+
+  theme(
+  legend.position = "inside",
+  legend.position.inside = c(0.1, 0.8),
+  legend.text=element_text(size=9),
+  legend.box.background =  element_rect(colour="black", linewidth = 1),
+  legend.title = element_text(size=9)
+)
+ci2
+#ggsave("Hypertension_BCS_cumhazv210126.png", #plot=last_plot(),height = 2100, width = 2100, #units="px" )
+
+ci1+ci2
+#ggsave("Hypertension_sex_bcs_cumhaz_Figure210126.png", #plot=last_plot(),height = 15, width = 30, units="cm" )
+```
+
+###ix. plot cumulative incidence
+
+```{r cuminc}
+#
+ci1<-survfit2(Surv(end_age_in_years, stHyp ) ~ Sex, data = Metadata_hyp_baseline)%>%
+  ggsurvfit(type="risk") +
+  labs(x = "Age (years)")+
+  ggtitle("A.Hypertension Diagnosis by Sex")+
+  #add_risktable()+
+  add_confidence_interval()+
+  add_censor_mark( size=1)+
+  scale_x_continuous(breaks = 6:17, limits = c(6, 17))+
+theme(
+  legend.position = "inside",
+  legend.position.inside = c(0.1, 0.9),
+  legend.text=element_text(size=9),
+  legend.box.background =  element_rect(colour="black", linewidth = 1),
+  legend.title = element_text(size=9), 
+  legend.title.position="top"
+)
+
+#ggsave("Hypertension_sex_cuminc04122025.png", #plot=last_plot(),height = 2100, width = 2100, #units="px" )
+
+
+#
+ci2<-survfit2(Surv(end_age_in_years, stHyp ) ~ BCS_group2, data = Metadata_hyp_baseline)%>%
+  ggsurvfit(type="risk") +
+  labs(x = "Age (years)", color="BCS")+
+  ggtitle("B.Hypertension Diagnosis by BCS")+
+ # add_risktable()+
+  #add_confidence_interval()+
+  #scale_color_manual(values=c("Obese" = "orange", "Overweight" = "purple", "Ideal weight" = "turquoise"))+ 
+  add_censor_mark( size=1)+
+  scale_x_continuous(breaks = 6:17, limits = c(6, 17))+
+  theme(
+  legend.position = "inside",
+  legend.position.inside = c(0.1, 0.8),
+  legend.text=element_text(size=9),
+  legend.box.background =  element_rect(colour="black", linewidth = 1),
+  legend.title = element_text(size=9)
+)
+#ggsave("Hypertension_BCS_cuminc041225.png", #plot=last_plot(),height = 2100, width = 2100, #units="px" )
+
+ci1+ci2
+#ggsave("Hypertension_cum_incidence_Figure.png", #plot=last_plot(),height = 15, width = 30, units="cm" )
+```
